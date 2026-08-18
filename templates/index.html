@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UKF Robot Localization Sandbox</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <h1>Robot Localization Sandbox</h1>
+        <p class="subtitle">
+          Differential drive &middot; 12 ft &times; 12 ft field &middot; all distances in inches
+        </p>
+      </header>
+
+      <main class="workspace">
+        <section class="arena-panel card">
+          <canvas id="arenaCanvas" width="900" height="900"></canvas>
+          <div class="drive-readout">
+            <span class="drive-label">Left drive</span>
+            <div class="wheel-bar"><span id="leftWheelBar"></span></div>
+            <span id="leftWheelValue" class="drive-value">0.0</span>
+            <span class="drive-label">Right drive</span>
+            <div class="wheel-bar"><span id="rightWheelBar"></span></div>
+            <span id="rightWheelValue" class="drive-value">0.0</span>
+          </div>
+          <p class="panel-hint">
+            <strong>W</strong> / <strong>S</strong> drive both sides forward and back &middot;
+            <strong>&larr;</strong> / <strong>&rarr;</strong> spin the sides in opposite directions to turn
+          </p>
+        </section>
+
+        <aside class="sidebar">
+          <div class="card controls-block">
+            <h2>Simulation</h2>
+            <div class="button-row">
+              <button id="pauseBtn">Pause</button>
+              <button id="resumeBtn">Resume</button>
+              <button id="resetBtn">Reset</button>
+              <button id="stepBtn">Step</button>
+            </div>
+            <div class="field">
+              <div class="field-head">
+                <label for="simSpeed">Simulation speed</label>
+                <button type="button" class="info-btn" data-info="speed" data-panel="simInfo" aria-label="About simulation speed">i</button>
+              </div>
+              <input id="simSpeed" type="range" min="0.25" max="3" step="0.05" value="1" />
+            </div>
+            <label class="checkbox-row">
+              <input id="debugToggle" type="checkbox" /> Debug mode (sigma points, covariance ellipse)
+            </label>
+            <div id="simInfo" class="info-panel hidden"></div>
+
+            <div class="button-row compact">
+              <button class="preset" data-experiment="perfect_sensors">Perfect Sensors</button>
+              <button class="preset" data-experiment="noisy_odometry">Noisy Odometry</button>
+              <button class="preset" data-experiment="noisy_imu">Noisy IMU</button>
+              <button class="preset" data-experiment="no_odometry">No Odometry</button>
+              <button class="preset" data-experiment="odometry_only">Odometry Only</button>
+              <button class="preset" data-experiment="all_sensors">All Sensors</button>
+              <button class="preset" data-experiment="high_noise">High Noise</button>
+            </div>
+          </div>
+
+          <div class="card ukf-block">
+            <h2>UKF</h2>
+            <div class="button-row">
+              <button id="ukfToggleBtn">Disable UKF</button>
+              <button id="resetUkfBtn">Reset UKF</button>
+              <button id="showUkfBtn">Show UKF Details</button>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <div class="field-head">
+                  <label for="alphaInput">Alpha</label>
+                  <button type="button" class="info-btn" data-info="alpha" data-panel="ukfInfo" aria-label="About alpha">i</button>
+                </div>
+                <input id="alphaInput" type="number" step="0.01" min="0.01" max="2" value="1.0" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="betaInput">Beta</label>
+                  <button type="button" class="info-btn" data-info="beta" data-panel="ukfInfo" aria-label="About beta">i</button>
+                </div>
+                <input id="betaInput" type="number" step="0.01" min="0" value="2" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="kappaInput">Kappa</label>
+                  <button type="button" class="info-btn" data-info="kappa" data-panel="ukfInfo" aria-label="About kappa">i</button>
+                </div>
+                <input id="kappaInput" type="number" step="0.01" value="0" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="initialCovInput">Initial pos cov (in²)</label>
+                  <button type="button" class="info-btn" data-info="initialCovariance" data-panel="ukfInfo" aria-label="About initial position covariance">i</button>
+                </div>
+                <input id="initialCovInput" type="number" step="0.1" min="0.001" value="4.0" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="initialHeadingInput">Initial hdg σ (deg)</label>
+                  <button type="button" class="info-btn" data-info="initialHeading" data-panel="ukfInfo" aria-label="About initial heading uncertainty">i</button>
+                </div>
+                <input id="initialHeadingInput" type="number" step="1" min="0.01" max="180" value="15" />
+              </div>
+            </div>
+            <div id="ukfInfo" class="info-panel hidden"></div>
+          </div>
+
+          <div class="card noise-block">
+            <h2>Sensor Noise</h2>
+            <div class="field-grid">
+              <div class="field">
+                <div class="field-head">
+                  <label for="odomNoiseInput">Odom (in/step)</label>
+                  <button type="button" class="info-btn" data-info="odometry" data-panel="noiseInfo" aria-label="About odometry noise">i</button>
+                </div>
+                <input id="odomNoiseInput" type="number" step="0.05" min="0" value="0.4" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="odomAngularNoiseInput">Odom (deg/step)</label>
+                  <button type="button" class="info-btn" data-info="odometryAngular" data-panel="noiseInfo" aria-label="About odometry heading noise">i</button>
+                </div>
+                <input id="odomAngularNoiseInput" type="number" step="0.01" min="0" value="0.115" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="imuNoiseInput">IMU (deg)</label>
+                  <button type="button" class="info-btn" data-info="imu" data-panel="noiseInfo" aria-label="About IMU noise">i</button>
+                </div>
+                <input id="imuNoiseInput" type="number" step="0.1" min="0" value="0.5" />
+              </div>
+              <div class="field">
+                <div class="field-head">
+                  <label for="distanceNoiseInput">Distance (in)</label>
+                  <button type="button" class="info-btn" data-info="distance" data-panel="noiseInfo" aria-label="About distance noise">i</button>
+                </div>
+                <input id="distanceNoiseInput" type="number" step="0.05" min="0" value="0.8" />
+              </div>
+            </div>
+            <div id="noiseInfo" class="info-panel hidden"></div>
+          </div>
+
+          <div class="card toggles-block">
+            <h2>
+              Sensor Toggles
+              <button type="button" class="info-btn" data-info="toggles" data-panel="toggleInfo" aria-label="About sensor toggles">i</button>
+            </h2>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="odom" checked /> Odometry</label>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="imu" checked /> IMU</label>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="front" checked /> Front Distance</label>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="back" checked /> Back Distance</label>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="left" checked /> Left Distance</label>
+            <label class="checkbox-row"><input type="checkbox" class="sensor-toggle" data-key="right" checked /> Right Distance</label>
+            <div id="toggleInfo" class="info-panel hidden"></div>
+          </div>
+        </aside>
+      </main>
+
+      <section class="bottom-panels">
+        <div class="card sensor-panel">
+          <h2>Sensors</h2>
+          <p class="panel-hint">true / reading &mdash; dimmed rows are disabled</p>
+          <table>
+            <tbody id="sensorTable"></tbody>
+          </table>
+        </div>
+
+        <div class="card state-panel">
+          <h2>UKF State</h2>
+          <div id="ukfStateText"></div>
+          <div id="ukfDetails" class="hidden"></div>
+        </div>
+
+        <div class="card graph-panel">
+          <h2>Graphs</h2>
+          <canvas id="graphCanvas" width="500" height="200"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

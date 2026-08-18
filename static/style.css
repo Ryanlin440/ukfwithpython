@@ -1,0 +1,346 @@
+:root {
+  --bg: #0b1220;
+  --panel: #121d2d;
+  --panel-2: #1a2a3d;
+  --card: #0e1828;
+  --border: #2d3d59;
+  --text: #e5edf8;
+  --muted: #b2c0d6;
+  --accent: #61dafb;
+  --accent-2: #7ce38b;
+  --warning: #f9c74f;
+  --danger: #ff6b6b;
+  --grid: rgba(255,255,255,0.1);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.app {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.topbar {
+  margin-bottom: 12px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.drive-readout {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.drive-label {
+  white-space: nowrap;
+}
+
+.drive-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 62px;
+  text-align: right;
+  color: var(--text);
+}
+
+.wheel-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+/* Centre tick, so a reversed wheel reads as opposite rather than just short. */
+.wheel-bar::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.wheel-bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-radius: 4px;
+}
+
+.field {
+  margin: 6px 0;
+}
+
+.field-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.field-head label {
+  margin: 0;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-btn {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.info-btn:hover,
+.info-btn[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+h2 .info-btn {
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.info-panel {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: rgba(97, 218, 251, 0.07);
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(600px, 2.1fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+}
+
+.arena-panel {
+  padding: 10px;
+}
+
+#arenaCanvas {
+  width: 100%;
+  display: block;
+  background: #09131c;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.controls-block h2,
+.ukf-block h2,
+.noise-block h2,
+.toggles-block h2,
+.sensor-panel h2,
+.state-panel h2,
+.graph-panel h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.05rem;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.button-row.compact {
+  margin-top: 8px;
+}
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+label {
+  display: block;
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+input[type="number"],
+input[type="range"] {
+  width: 100%;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  /* Bottom-align so a label that wraps to two lines does not shove its input
+     out of line with the one beside it. */
+  align-items: end;
+}
+
+.bottom-panels {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1.5fr;
+  gap: 16px;
+}
+
+.sensor-panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sensor-panel td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sensor-panel td:first-child {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sensor-panel tr.sensor-off {
+  opacity: 0.35;
+}
+
+.out-of-range {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.sensor-panel td:last-child {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.panel-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: -4px 0 8px;
+}
+
+/* Sits below the drive bars rather than under a heading, so it needs the
+   opposite of the negative top margin above. */
+.arena-panel .panel-hint {
+  margin: 10px 0 2px;
+}
+
+#ukfStateText {
+  color: var(--text);
+  font-size: 0.94rem;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.legend-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.hidden {
+  display: none;
+}
+
+#ukfDetails {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+#graphCanvas {
+  width: 100%;
+  display: block;
+  background: #08131c;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+@media (max-width: 1100px) {
+  .workspace,
+  .bottom-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
