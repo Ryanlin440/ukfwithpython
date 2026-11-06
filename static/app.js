@@ -355,33 +355,28 @@ function drawArena() {
   if (state.current.debug) drawDebugOverlay(estPose, worldToScreen, scale);
 }
 
-const DEBUG_MIN_RADIUS_PX = 30;
+// Fixed rather than adaptive: a zoom that changes with the covariance makes the
+// ellipse jump between sizes, hiding the very change it is meant to show.
+const DEBUG_ZOOM = 20;
 
 /**
- * Covariance ellipse and sigma points, magnified when they would be too small
- * to see.
+ * Covariance ellipse and sigma points, magnified about the estimate.
  *
  * A well-converged filter is sure of its position to a fraction of an inch,
  * which is a pixel or two on this canvas. Both overlays are therefore scaled up
- * about the estimate by a common factor, so their shape and the sigma points'
- * placement relative to the ellipse stay correct, and the factor is printed so
- * the picture never claims more uncertainty than the filter has.
+ * about the estimate by one constant factor, so their shape, the sigma points'
+ * placement relative to the ellipse, and changes in size over time all stay
+ * correct. The factor is printed so the picture never claims more uncertainty
+ * than the filter has.
  */
 function drawDebugOverlay(estPose, worldToScreen, scale) {
   const ellipse = state.current.covariance_ellipse;
   const centre = worldToScreen(estPose.x, estPose.y);
+  const zoom = DEBUG_ZOOM;
 
-  let zoom = 1;
-  let labelOffset = DEBUG_MIN_RADIUS_PX;
+  let labelOffset = 0;
   if (ellipse) {
-    const majorPx = Math.max(ellipse.rx, ellipse.ry) * scale;
-    if (majorPx > 0 && majorPx < DEBUG_MIN_RADIUS_PX) {
-      // Round to 1, 2 or 5 times a power of ten so the label reads cleanly.
-      const raw = DEBUG_MIN_RADIUS_PX / majorPx;
-      const pow = 10 ** Math.floor(Math.log10(raw));
-      zoom = [1, 2, 5, 10].map((m) => m * pow).find((z) => z >= raw);
-    }
-    labelOffset = majorPx * zoom;
+    labelOffset = Math.max(ellipse.rx, ellipse.ry) * scale * zoom;
 
     const px = worldToScreen(ellipse.cx, ellipse.cy);
     ctx.save();
@@ -403,11 +398,9 @@ function drawDebugOverlay(estPose, worldToScreen, scale) {
     ctx.fill();
   }
 
-  if (zoom > 1) {
-    ctx.fillStyle = COLORS.ellipse;
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.fillText(`×${zoom}`, centre.x + labelOffset + 6, centre.y - labelOffset * 0.7);
-  }
+  ctx.fillStyle = COLORS.ellipse;
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText(`×${zoom}`, centre.x + labelOffset + 6, centre.y - labelOffset * 0.7);
 }
 
 function drawGraphs() {
