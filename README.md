@@ -1,7 +1,7 @@
 # UKF Robot Localization Sandbox
 
 A local Python/Flask website that drives a differential-drive robot around a
-12 ft x 12 ft field and visualizes noisy odometry, IMU and rangefinder readings
+12 ft x 12 ft field and visualizes noisy odometry, IMU and distance sensor readings
 alongside a live Unscented Kalman Filter estimate.
 
 **Every length in this project is in inches.** The field is 144 x 144 in, the
