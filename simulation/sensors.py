@@ -33,24 +33,82 @@ class OdometrySensor(Sensor):
     even when the chassis has not translated sideways at all. Whoever consumes
     this reading has to subtract that term back out to recover the chassis
     motion.
+
+    Error is proportional to MOTION, not to time. An encoder that is not
+    turning produces no ticks and therefore no error, so a stationary robot
+    accumulates essentially nothing. Modelling this as a fixed per-step sigma
+    instead -- noise added every tick regardless of movement -- turns standing
+    still into a random walk that drifts tens of inches in ten seconds, which
+    no real drivetrain does.
+
+    Two error sources, both scaled by how far the robot actually moved:
+
+    `scale_bias` / `rot_bias` are SYSTEMATIC -- a wheel whose effective diameter
+    is 0.5% off reads 0.5% long every single time, in the same direction. This
+    is the dominant real-world error and it does not average out.
+
+    The remaining coefficients are RANDOM per step, covering slip and encoder
+    jitter. The cross terms matter: turning scrubs the wheels sideways
+    (`trans_per_rot`), and unequal wheel diameters bend a straight drive
+    (`rot_per_trans`).
     """
 
-    def __init__(self, noise_std=0.4, angular_noise_std=0.002, lateral_offset=5.0, bias=0.0):
-        super().__init__(noise_std=noise_std, bias=bias)
-        self.angular_noise_std = angular_noise_std
+    def __init__(self, trans_scale=0.01, rot_scale=0.01,
+                 trans_per_rot=0.15, rot_per_trans=0.0002,
+                 scale_bias=0.005, rot_bias=0.005,
+                 quantization=0.002, rot_quantization=2e-5,
+                 lateral_offset=5.0, bias=0.0):
+        super().__init__(noise_std=0.0, bias=bias)
+        self.trans_scale = trans_scale          # in of error per in travelled
+        self.rot_scale = rot_scale              # rad of error per rad turned
+        self.trans_per_rot = trans_per_rot      # in of error per rad turned
+        self.rot_per_trans = rot_per_trans      # rad of error per in travelled
+        self.scale_bias = scale_bias            # systematic, fraction of distance
+        self.rot_bias = rot_bias                # systematic, fraction of angle
+        self.quantization = quantization        # in, encoder resolution floor
+        self.rot_quantization = rot_quantization
         self.lateral_offset = lateral_offset
+
+    def step_sigmas(self, translation, rotation):
+        """Per-step standard deviations for a step of this size.
+
+        Returned so the filter can build its process noise from exactly the
+        numbers the sensor used, instead of a constant that disagrees with them.
+        """
+        translation = abs(translation)
+        rotation = abs(rotation)
+        sigma_trans = (self.trans_scale * translation
+                       + self.trans_per_rot * rotation
+                       + self.quantization)
+        sigma_rot = (self.rot_scale * rotation
+                     + self.rot_per_trans * translation
+                     + self.rot_quantization)
+        return sigma_trans, sigma_rot
 
     def sample(self, forward_delta, lateral_delta, delta_theta):
         true_forward = float(forward_delta)
         true_theta = float(normalize_angle(delta_theta))
+        # Real geometry, not noise: the offset pod swings when the chassis turns.
         true_lateral = float(lateral_delta) + self.lateral_offset * true_theta
+
+        translation = math.hypot(true_forward, float(lateral_delta))
+        sigma_trans, sigma_rot = self.step_sigmas(translation, true_theta)
+
+        # Systematic scale error applies to what actually moved, so a stationary
+        # robot is unaffected by it no matter how large it is.
+        biased_forward = true_forward * (1.0 + self.scale_bias)
+        biased_lateral = true_lateral * (1.0 + self.scale_bias)
+        biased_theta = true_theta * (1.0 + self.rot_bias)
+
         return {
             "true_forward": true_forward,
             "true_lateral": true_lateral,
             "true_theta": true_theta,
-            "noisy_forward": self.add_noise(true_forward),
-            "noisy_lateral": self.add_noise(true_lateral),
-            "noisy_theta": self.add_noise(true_theta, self.angular_noise_std),
+            "noisy_forward": self.add_noise(biased_forward, sigma_trans),
+            "noisy_lateral": self.add_noise(biased_lateral, sigma_trans),
+            "noisy_theta": self.add_noise(biased_theta, sigma_rot),
+            "sigma_trans": sigma_trans,
+            "sigma_rot": sigma_rot,
         }
 
 

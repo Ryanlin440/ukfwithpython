@@ -310,23 +310,110 @@ class TestOdometryPods(unittest.TestCase):
 
     def test_lateral_process_noise_accounts_for_the_offset(self):
         sim = Simulation()
-        noise = sim.build_process_noise(0.02)
-        # At theta = 0 the body axes line up with world, so read the diagonal.
-        self.assertAlmostEqual(sim.ukf.state[2], 0.0, places=9)
+        drive(sim, ['W'], 5)
+        # Read the diagonal in body axes by pinning the heading to zero.
+        sim.ukf.set_state(sim.ukf.state[0], sim.ukf.state[1], 0.0)
+        noise = sim.build_process_noise(0.02, sim.sensor_cache)
+
+        sigma_trans = sim.sensor_cache['odom_sigma_trans']
+        sigma_rot = sim.sensor_cache['odom_sigma_rot']
         offset = sim.odom_sensor.lateral_offset
-        expected = (sim.noise_config['odometry'] ** 2
-                    + (offset * sim.noise_config['odometry_angular']) ** 2)
-        self.assertAlmostEqual(noise[1, 1], expected, places=12)
+
+        self.assertAlmostEqual(noise[0, 0], sigma_trans ** 2, places=12)
+        self.assertAlmostEqual(noise[1, 1], sigma_trans ** 2 + (offset * sigma_rot) ** 2, places=12)
         self.assertGreater(noise[1, 1], noise[0, 0], "lateral must be the noisier axis")
 
     def test_process_noise_rotates_with_heading(self):
         sim = Simulation()
+        drive(sim, ['W'], 5)
+        sigma_trans = sim.sensor_cache['odom_sigma_trans']
         sim.ukf.set_state(0.0, 0.0, math.pi / 2.0)
-        noise = sim.build_process_noise(0.02)
-        forward_var = sim.noise_config['odometry'] ** 2
+        noise = sim.build_process_noise(0.02, sim.sensor_cache)
         # Facing +Y, the forward axis is world Y, so the variances swap places.
-        self.assertAlmostEqual(noise[1, 1], forward_var, places=12)
+        self.assertAlmostEqual(noise[1, 1], sigma_trans ** 2, places=12)
         self.assertGreater(noise[0, 0], noise[1, 1])
+
+    def test_odometry_error_scales_with_motion_not_time(self):
+        """A wheel that is not turning produces no ticks, so a parked robot
+        accumulates essentially nothing.
+
+        Modelling odometry as a fixed per-step sigma instead made standing
+        still a random walk: at 50 steps/s the drift went as sigma*sqrt(t),
+        reaching tens of inches in ten seconds. No real drivetrain does that,
+        and it made the odometry-only preset useless for debugging.
+        """
+        np.random.seed(0)
+        sim = Simulation()
+        sim.apply_experiment('odometry_only')
+        drive(sim, [], 1500)  # 30 seconds parked
+        self.assertLess(sim.history['position_error'][-1], 1.0)
+        self.assertLess(abs(math.degrees(sim.history['heading_error'][-1])), 1.0)
+
+    def test_error_tracks_distance_travelled(self):
+        """Drive twice as far, accumulate roughly twice the error -- not twice
+        the error for twice the elapsed time."""
+        np.random.seed(1)
+        sim = Simulation()
+        sim.apply_experiment('odometry_only')
+        drive(sim, ['W'], 150)
+        moving = sim.history['position_error'][-1]
+
+        np.random.seed(1)
+        parked = Simulation()
+        parked.apply_experiment('odometry_only')
+        drive(parked, [], 150)
+        still = parked.history['position_error'][-1]
+
+        self.assertGreater(moving, 10 * max(still, 1e-6))
+
+    def test_process_noise_shrinks_when_stationary(self):
+        """Q is built from the sigmas the sensor actually used, so it has to
+        collapse when the robot is not moving. A constant Q would keep
+        inflating the covariance of a perfectly known parked pose."""
+        sim = Simulation()
+        parked = sim.build_process_noise(0.02, sim.sensor_cache)
+        drive(sim, ['W'], 30)
+        moving = sim.build_process_noise(0.02, sim.sensor_cache)
+        self.assertGreater(np.trace(moving), 10.0 * np.trace(parked))
+
+    def test_no_odometry_still_respects_the_nonholonomic_constraint(self):
+        """A differential drive cannot strafe, and that is true whether or not
+        the pods are reporting. Inflating the lateral axis to full speed along
+        with the forward one throws away a hard geometric fact and lets the
+        estimate wander across an axis the robot cannot move along."""
+        sim = Simulation()
+        sim.sensor_enabled['odom'] = False
+        sim.ukf.set_state(0.0, 0.0, 0.0)  # body axes aligned with world
+        noise = sim.build_process_noise(0.02, sim.sensor_cache)
+        self.assertGreater(noise[0, 0], 10.0 * noise[1, 1])
+
+    def test_parked_without_odometry_jitters_less_sideways(self):
+        """The behavioural consequence of the constraint above."""
+        np.random.seed(0)
+        sim = Simulation()
+        sim.apply_experiment('no_odometry')
+        xs, ys = [], []
+        for i in range(1200):
+            sim.update_simulation(0.02)
+            if i > 400:
+                xs.append(sim.ukf.state[0])
+                ys.append(sim.ukf.state[1])
+        # Heading is ~0, so world Y is the body-lateral axis.
+        self.assertLess(np.std(ys), 0.5 * np.std(xs))
+
+    def test_perfect_sensors_really_are_perfect(self):
+        """Every noise knob at zero must mean zero -- including the encoder
+        quantization floor and the slip cross-terms. This baseline is the most
+        valuable test there is: with no noise anywhere the estimate must land
+        exactly on the robot, so any deviation is a frame, sign or units bug."""
+        sim = Simulation()
+        sim.apply_experiment('perfect_sensors')
+        o = sim.odom_sensor
+        for name in ('trans_scale', 'rot_scale', 'trans_per_rot', 'rot_per_trans',
+                     'scale_bias', 'rot_bias', 'quantization', 'rot_quantization'):
+            self.assertEqual(getattr(o, name), 0.0, f"{name} is not zeroed")
+        errors = drive(sim, ['W', 'ArrowLeft'], 200)
+        self.assertLess(max(errors), 1e-6)
 
 
 class TestFilterConvergence(unittest.TestCase):

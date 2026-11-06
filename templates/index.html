@@ -117,17 +117,17 @@
             <div class="field-grid">
               <div class="field">
                 <div class="field-head">
-                  <label for="odomNoiseInput">Odom (in/step)</label>
+                  <label for="odomNoiseInput">Odom scale (%)</label>
                   <button type="button" class="info-btn" data-info="odometry" data-panel="noiseInfo" aria-label="About odometry noise">i</button>
                 </div>
-                <input id="odomNoiseInput" type="number" step="0.05" min="0" value="0.4" />
+                <input id="odomNoiseInput" type="number" step="0.1" min="0" value="1.0" />
               </div>
               <div class="field">
                 <div class="field-head">
-                  <label for="odomAngularNoiseInput">Odom (deg/step)</label>
+                  <label for="odomAngularNoiseInput">Odom turn (%)</label>
                   <button type="button" class="info-btn" data-info="odometryAngular" data-panel="noiseInfo" aria-label="About odometry heading noise">i</button>
                 </div>
-                <input id="odomAngularNoiseInput" type="number" step="0.01" min="0" value="0.115" />
+                <input id="odomAngularNoiseInput" type="number" step="0.1" min="0" value="1.0" />
               </div>
               <div class="field">
                 <div class="field-head">

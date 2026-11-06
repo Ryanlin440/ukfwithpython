@@ -73,11 +73,16 @@ opposite speeds spin in place, and anything between traces an arc.
 The state is the pose `[x, y, theta]`. The UKF never receives ground truth; the
 only two paths into it are:
 
-1. **Prediction** consumes *odometry* — the noisy distance the wheels report
-   rolling and the heading change they report turning. Odometry is a motion
-   input, not a position measurement, so it is integrated by the prediction step
-   rather than compared against the state. Its lateral term is exactly zero:
-   encoders cannot observe sideways motion, and this chassis cannot produce any.
+1. **Prediction** consumes *odometry* — two dead wheels reporting how far the
+   chassis rolled along each body axis, plus the heading change. Odometry is a
+   motion input, not a position measurement, so it is integrated by the
+   prediction step rather than compared against the state.
+
+   Its error is proportional to **motion, not to time**: a wheel that is not
+   turning produces no ticks and therefore no error, so a parked robot
+   accumulates only encoder quantization. Half the error is systematic — a
+   mis-measured wheel diameter reads long every time and does not average out —
+   and half is random slip.
 2. **Correction** consumes whichever of the *IMU heading* and *rangefinders* are
    both enabled and in range. The measurement vector's contents and ordering come
    from `UKF.measurement_layout`, and both the simulation and the measurement
@@ -85,8 +90,16 @@ only two paths into it are:
 
 Process noise is anisotropic in the body frame — the robot is uncertain about how
 far it rolled but barely moves sideways — and is rotated into world coordinates
-rather than applied as a circle. With odometry off it widens to cover every
-displacement one step could produce.
+rather than applied as a circle. It is built from the standard deviations the
+odometry sensor actually used for that step, not from a constant, so it collapses
+when the robot is stationary instead of inflating the covariance of a pose that
+is not changing.
+
+With odometry off, the forward and angular terms widen to cover the worst case,
+but the lateral term does not: a differential drive is nonholonomic and cannot
+strafe whether or not the pods are reporting. Note that this assumption is a
+model of the drivetrain, not of the world — a real robot shoved sideways on
+defence *does* move laterally, and only the lateral pod can see it.
 
 The estimate is constrained to the field, which is map knowledge rather than
 ground truth, and matters because rangefinder readings saturate outside the walls

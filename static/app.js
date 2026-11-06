@@ -24,8 +24,8 @@ const INFO_TEXT = {
   kappa: 'Secondary scaling, normally 0. Positive values push the sigma points further out, acting much like a larger alpha. Strongly negative values (below about -2.9 for a 3-state filter) make the scaling degenerate; the input is clamped to keep the weights finite.',
   initialCovariance: 'How uncertain the filter says its *position* is at reset, in square inches. Large means it distrusts its starting guess and snaps hard onto the first few measurements. Small means it trusts the guess and converges slowly — set it small with a wrong starting pose and the filter can take a long time to find the robot. Use "Reset UKF" to see the effect.',
   initialHeading: 'How uncertain the filter says its *heading* is at reset, as a standard deviation in degrees. This is kept separate from the position covariance because the two are in different units, and heading punishes a bad guess much harder: the sigma points are spread across this range and each one carries the robot\u2019s motion off in a different direction, so a large value makes the averaged prediction come out short. Set it to 90° and watch dead reckoning under-travel badly until the sensors pull the heading in.',
-  odometry: 'Noise on the distance the wheels report rolling each step, in inches. Odometry is the prediction input, so this doubles as how much the filter distrusts its own motion model: raise it and the filter leans on the IMU and distance sensors instead.',
-  odometryAngular: 'Noise on the heading change the wheels report each step, in degrees. This is what makes dead reckoning curve away from the truth. With no IMU it is the only heading information the filter has, so raising it makes the estimate slowly rotate off course.',
+  odometry: 'Odometry error as a percentage of distance actually travelled. Real encoders produce no ticks when the robot is not moving, so a stationary robot accumulates almost nothing here no matter how high you set this — the error tracks inches driven, not seconds elapsed. Half of it is applied as a systematic scale error (a mis-measured wheel diameter reads long every time and does not average out) and half as random slip.',
+  odometryAngular: 'Heading error as a percentage of the angle actually turned. This is what makes dead reckoning curve away from the truth, and it is the more damaging of the two: a heading error rotates every inch you drive afterwards. Like the scale term it only accumulates while the robot is turning, not while it sits still.',
   imu: 'Noise on the absolute heading reading, in degrees. Unlike odometry this does not accumulate — it is a direct measurement of orientation. Raise it and the filter has to infer heading from how the distance readings change instead.',
   distance: 'Noise on each rangefinder reading, in inches. These are the only measurements that tie the estimate to a fixed position, so raising it weakens every correction and lets the estimate drift with the odometry.',
   toggles: 'Turning a sensor off removes it from the filter entirely, not just from the display. Odometry is the prediction input, so switching it off leaves the filter with no motion model — it must localise from the absolute sensors alone. Note that four distance sensors with no heading reference are ambiguous: a square arena looks identical under 90-degree rotations, so turning off both odometry and the IMU can leave the filter locked onto a rotated pose.',
@@ -105,8 +105,8 @@ async function syncConfigFromServer() {
     configInputs.kappa.value = config.ukf.kappa;
     configInputs.initialCov.value = config.ukf.initial_covariance;
     configInputs.initialHeading.value = config.ukf.initial_heading_deg;
-    configInputs.odomNoise.value = config.sensor_noise.odometry.toFixed(2);
-    configInputs.odomAngularNoise.value = degrees(config.sensor_noise.odometry_angular).toFixed(3);
+    configInputs.odomNoise.value = (config.sensor_noise.odometry * 100).toFixed(2);
+    configInputs.odomAngularNoise.value = (config.sensor_noise.odometry_angular * 100).toFixed(2);
     configInputs.imuNoise.value = degrees(config.sensor_noise.imu).toFixed(2);
     configInputs.distanceNoise.value = config.sensor_noise.distance.toFixed(2);
     configInputs.simSpeed.value = config.simulation.speed;
@@ -130,8 +130,8 @@ function applyConfig() {
       initial_heading_deg: Number(configInputs.initialHeading.value),
     },
     sensor_noise: {
-      odometry: Number(configInputs.odomNoise.value),
-      odometry_angular: (Number(configInputs.odomAngularNoise.value) * Math.PI) / 180.0,
+      odometry: Number(configInputs.odomNoise.value) / 100.0,
+      odometry_angular: Number(configInputs.odomAngularNoise.value) / 100.0,
       imu: (Number(configInputs.imuNoise.value) * Math.PI) / 180.0,
       distance: Number(configInputs.distanceNoise.value),
     },
@@ -337,30 +337,6 @@ function drawArena() {
     ctx.fill();
   }
 
-  if (state.current.debug) {
-    const ellipse = state.current.covariance_ellipse;
-    if (ellipse) {
-      const px = worldToScreen(ellipse.cx, ellipse.cy);
-      ctx.save();
-      ctx.translate(px.x, px.y);
-      ctx.rotate(-ellipse.angle);
-      ctx.strokeStyle = COLORS.ellipse;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, ellipse.rx * scale, ellipse.ry * scale, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.fillStyle = COLORS.sigma;
-    for (const pt of state.current.sigma_points || []) {
-      const sp = worldToScreen(pt.x, pt.y);
-      ctx.beginPath();
-      ctx.arc(sp.x, sp.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
   const truePos = worldToScreen(truePose.x, truePose.y);
   const estPos = worldToScreen(estPose.x, estPose.y);
   ctx.strokeStyle = 'rgba(255,255,255,0.45)';
@@ -374,6 +350,64 @@ function drawArena() {
 
   drawRobot(truePose, COLORS.truth, true);
   drawRobot(estPose, COLORS.estimate, false);
+
+  // Drawn last so the robots cannot paint over it.
+  if (state.current.debug) drawDebugOverlay(estPose, worldToScreen, scale);
+}
+
+const DEBUG_MIN_RADIUS_PX = 30;
+
+/**
+ * Covariance ellipse and sigma points, magnified when they would be too small
+ * to see.
+ *
+ * A well-converged filter is sure of its position to a fraction of an inch,
+ * which is a pixel or two on this canvas. Both overlays are therefore scaled up
+ * about the estimate by a common factor, so their shape and the sigma points'
+ * placement relative to the ellipse stay correct, and the factor is printed so
+ * the picture never claims more uncertainty than the filter has.
+ */
+function drawDebugOverlay(estPose, worldToScreen, scale) {
+  const ellipse = state.current.covariance_ellipse;
+  const centre = worldToScreen(estPose.x, estPose.y);
+
+  let zoom = 1;
+  let labelOffset = DEBUG_MIN_RADIUS_PX;
+  if (ellipse) {
+    const majorPx = Math.max(ellipse.rx, ellipse.ry) * scale;
+    if (majorPx > 0 && majorPx < DEBUG_MIN_RADIUS_PX) {
+      // Round to 1, 2 or 5 times a power of ten so the label reads cleanly.
+      const raw = DEBUG_MIN_RADIUS_PX / majorPx;
+      const pow = 10 ** Math.floor(Math.log10(raw));
+      zoom = [1, 2, 5, 10].map((m) => m * pow).find((z) => z >= raw);
+    }
+    labelOffset = majorPx * zoom;
+
+    const px = worldToScreen(ellipse.cx, ellipse.cy);
+    ctx.save();
+    ctx.translate(centre.x + (px.x - centre.x) * zoom, centre.y + (px.y - centre.y) * zoom);
+    ctx.rotate(-ellipse.angle);
+    ctx.strokeStyle = COLORS.ellipse;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, ellipse.rx * scale * zoom, ellipse.ry * scale * zoom, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.fillStyle = COLORS.sigma;
+  for (const pt of state.current.sigma_points || []) {
+    const sp = worldToScreen(pt.x, pt.y);
+    ctx.beginPath();
+    ctx.arc(centre.x + (sp.x - centre.x) * zoom, centre.y + (sp.y - centre.y) * zoom, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (zoom > 1) {
+    ctx.fillStyle = COLORS.ellipse;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText(`×${zoom}`, centre.x + labelOffset + 6, centre.y - labelOffset * 0.7);
+  }
 }
 
 function drawGraphs() {

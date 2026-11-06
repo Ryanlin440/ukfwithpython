@@ -42,8 +42,8 @@ class Simulation:
         self.ukf_enabled = True
 
         self.noise_config = {
-            'odometry': 0.4,                      # inches per step
-            'odometry_angular': 0.002,            # radians per step
+            'odometry': 0.01,                     # in of error per in travelled
+            'odometry_angular': 0.01,             # rad of error per rad turned
             'imu': 0.5 * math.pi / 180.0,         # radians
             'distance': 0.8,                      # inches
         }
@@ -66,8 +66,8 @@ class Simulation:
         }
 
         self.odom_sensor = OdometrySensor(
-            noise_std=self.noise_config['odometry'],
-            angular_noise_std=self.noise_config['odometry_angular'],
+            trans_scale=self.noise_config['odometry'],
+            rot_scale=self.noise_config['odometry_angular'],
         )
         self.imu_sensor = IMUSensor(noise_std=self.noise_config['imu'])
         self.distance_sensors = {
@@ -75,6 +75,7 @@ class Simulation:
             for key in DISTANCE_SENSOR_KEYS
         }
 
+        self.sync_sensor_noise()
         self.reset()
 
     # ------------------------------------------------------------------ setup
@@ -208,8 +209,24 @@ class Simulation:
                         self.sensor_enabled[key] = bool(enabled)
 
     def sync_sensor_noise(self):
-        self.odom_sensor.noise_std = self.noise_config['odometry']
-        self.odom_sensor.angular_noise_std = self.noise_config['odometry_angular']
+        self.odom_sensor.trans_scale = self.noise_config['odometry']
+        self.odom_sensor.rot_scale = self.noise_config['odometry_angular']
+        # Systematic scale error tracks the random term: a drivetrain with sloppy
+        # encoders generally has a mis-measured wheel diameter too.
+        self.odom_sensor.scale_bias = 0.5 * self.noise_config['odometry']
+        self.odom_sensor.rot_bias = 0.5 * self.noise_config['odometry_angular']
+        # The encoder-resolution floor is tied to the same knob so that setting
+        # the noise to zero yields a genuinely perfect sensor. That baseline is
+        # worth preserving: with every noise source off the estimate must land
+        # exactly on the robot, so any deviation at all is a frame, sign or
+        # units bug rather than something noise could explain.
+        self.odom_sensor.quantization = 0.2 * self.noise_config['odometry']
+        self.odom_sensor.rot_quantization = 0.002 * self.noise_config['odometry_angular']
+        # Cross terms scale with the same knobs, for the same reason: turning
+        # scrubs the wheels sideways and unequal wheels bend a straight drive,
+        # but a drivetrain with no error at all does neither.
+        self.odom_sensor.trans_per_rot = 15.0 * self.noise_config['odometry']
+        self.odom_sensor.rot_per_trans = 0.02 * self.noise_config['odometry_angular']
         self.imu_sensor.noise_std = self.noise_config['imu']
         for sensor in self.distance_sensors.values():
             sensor.noise_std = self.noise_config['distance']
@@ -218,12 +235,12 @@ class Simulation:
         deg = math.pi / 180.0
         presets = {
             'perfect_sensors': {'odometry': 0.0, 'odometry_angular': 0.0, 'imu': 0.0, 'distance': 0.0},
-            'noisy_odometry': {'odometry': 3.0, 'odometry_angular': 0.02, 'imu': 0.5 * deg, 'distance': 0.8},
-            'noisy_imu': {'odometry': 0.4, 'odometry_angular': 0.002, 'imu': 15.0 * deg, 'distance': 0.8},
+            'noisy_odometry': {'odometry': 0.06, 'odometry_angular': 0.06, 'imu': 0.5 * deg, 'distance': 0.8},
+            'noisy_imu': {'odometry': 0.01, 'odometry_angular': 0.01, 'imu': 15.0 * deg, 'distance': 0.8},
             'no_odometry': {'odometry': 0.0, 'odometry_angular': 0.0, 'imu': 0.5 * deg, 'distance': 0.8},
-            'odometry_only': {'odometry': 1.2, 'odometry_angular': 0.006, 'imu': 0.0, 'distance': 0.0},
-            'all_sensors': {'odometry': 0.4, 'odometry_angular': 0.002, 'imu': 0.5 * deg, 'distance': 0.8},
-            'high_noise': {'odometry': 5.0, 'odometry_angular': 0.03, 'imu': 5.0 * deg, 'distance': 3.0},
+            'odometry_only': {'odometry': 0.02, 'odometry_angular': 0.02, 'imu': 0.0, 'distance': 0.0},
+            'all_sensors': {'odometry': 0.01, 'odometry_angular': 0.01, 'imu': 0.5 * deg, 'distance': 0.8},
+            'high_noise': {'odometry': 0.12, 'odometry_angular': 0.12, 'imu': 5.0 * deg, 'distance': 3.0},
         }
 
         with self.lock:
@@ -255,8 +272,14 @@ class Simulation:
 
     # ------------------------------------------------------------------ model
 
-    def build_process_noise(self, dt):
+    def build_process_noise(self, dt, sensor_data):
         """Prediction uncertainty added each step, in world coordinates.
+
+        Built from the standard deviations the odometry sensor actually used for
+        this step, not from a constant. That matters because those sigmas scale
+        with how far the robot moved: standing still, the sensor injects almost
+        nothing and Q must shrink to match, or the filter's covariance balloons
+        while its estimate sits perfectly still.
 
         The body-frame noise is anisotropic, so it has to be rotated into world
         coordinates rather than applied as a circle. The lateral axis is the
@@ -265,24 +288,31 @@ class Simulation:
         noise into the lateral estimate on top of that pod's own.
         """
         if self.sensor_enabled.get('odom', False):
+            sigma_trans = sensor_data['odom_sigma_trans']
+            sigma_rot = sensor_data['odom_sigma_rot']
             offset = self.odom_sensor.lateral_offset
-            forward_var = self.noise_config['odometry'] ** 2
-            lateral_var = (
-                self.noise_config['odometry'] ** 2
-                + (offset * self.noise_config['odometry_angular']) ** 2
-            )
-            angular_var = self.noise_config['odometry_angular'] ** 2
+
+            forward_var = sigma_trans ** 2
+            lateral_var = sigma_trans ** 2 + (offset * sigma_rot) ** 2
+            angular_var = sigma_rot ** 2
         else:
-            # No odometry: the filter has no motion information at all, so the
-            # noise has to cover every displacement one step could produce.
-            forward_var = lateral_var = (self.robot.max_linear_velocity * dt) ** 2
+            # No odometry: the filter has no idea how far the robot rolled, so
+            # the forward and angular terms have to cover the worst case.
+            #
+            # The lateral term does not. A differential drive is nonholonomic --
+            # it physically cannot strafe -- and that constraint holds whether or
+            # not the pods are reporting. Inflating sideways to full speed throws
+            # away a hard geometric fact and lets the estimate wander across an
+            # axis the robot cannot move along.
+            forward_var = (self.robot.max_linear_velocity * dt) ** 2
+            lateral_var = (0.05 * self.robot.max_linear_velocity * dt) ** 2
             angular_var = (self.robot.max_angular_velocity * dt) ** 2
 
-        body = np.diag([max(forward_var, 1e-9), max(lateral_var, 1e-9)])
+        body = np.diag([max(forward_var, 1e-12), max(lateral_var, 1e-12)])
         R = rotation_matrix(self.ukf.state[2])
         noise = np.zeros((3, 3), dtype=float)
         noise[:2, :2] = R @ body @ R.T
-        noise[2, 2] = max(angular_var, 1e-9)
+        noise[2, 2] = max(angular_var, 1e-12)
         return noise
 
     def build_measurement_noise(self, layout):
@@ -340,7 +370,7 @@ class Simulation:
             self.sensor_cache = sensor_data
 
             if self.ukf_enabled:
-                self.ukf.predict(self.build_control(sensor_data, dt), dt, self.build_process_noise(dt))
+                self.ukf.predict(self.build_control(sensor_data, dt), dt, self.build_process_noise(dt, sensor_data))
 
                 available = self.available_channels(sensor_data)
                 layout = self.ukf.measurement_layout(self.sensor_enabled, available)
@@ -382,6 +412,8 @@ class Simulation:
             'odom_lateral_noisy': odom['noisy_lateral'],
             'odom_theta_true': odom['true_theta'],
             'odom_theta_noisy': odom['noisy_theta'],
+            'odom_sigma_trans': odom['sigma_trans'],
+            'odom_sigma_rot': odom['sigma_rot'],
             'imu_true': imu['true'],
             'imu_noisy': imu['noisy'],
         }
